@@ -11,3 +11,4 @@ apps/orchestration/data/
 # Local planning docs — keep on local machine only
 SPRINT*.md
 backlog.md
+implementation-slides.md
