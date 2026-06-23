@@ -7,3 +7,7 @@ dist/
 # Runtime data — regenerated on service startup, should not be committed
 apps/mock-intellum/data/*.db
 apps/orchestration/data/
+
+# Local planning docs — keep on local machine only
+SPRINT*.md
+backlog.md
