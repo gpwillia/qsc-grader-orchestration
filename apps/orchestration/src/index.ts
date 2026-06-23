@@ -4,6 +4,7 @@ import type { AuthUser } from '@qsc/contracts';
 import { cors } from 'hono/cors';
 import { zValidator } from '@hono/zod-validator';
 import { z } from 'zod';
+import { randomUUID } from 'node:crypto';
 import { OrchestrationStore } from './db.js';
 import { AssignmentEngine } from './assignments.js';
 import { requireAdmin, requireAuth, signAccessToken } from './auth.js';
@@ -11,18 +12,10 @@ import { runNeedsGradingSync } from './sync.js';
 
 type AppVariables = {
   authUser: AuthUser;
+  requestId: string;
 };
 
 const app = new Hono<{ Variables: AppVariables }>();
-app.use(
-  '*',
-  cors({
-    // Dev/test mode: allow tunnel-hosted UI origins to call local API.
-    origin: '*',
-    allowHeaders: ['Authorization', 'Content-Type'],
-    allowMethods: ['GET', 'POST', 'OPTIONS']
-  })
-);
 
 const port = Number(process.env.PORT ?? 8789);
 const intellumApiBaseUrl = process.env.INTELLUM_API_BASE_URL ?? 'http://localhost:8788';
@@ -30,16 +23,114 @@ const jwtSecret = process.env.JWT_SECRET ?? 'local-dev-secret-change-me';
 const jwtExpiresIn = process.env.JWT_EXPIRES_IN ?? '8h';
 const pollIntervalSeconds = Number(process.env.POLL_INTERVAL_SECONDS ?? 0);
 const cronToken = process.env.CRON_TOKEN ?? '';
+const nodeEnv = process.env.NODE_ENV ?? 'development';
+const configuredCorsOrigins = (process.env.CORS_ORIGINS ?? '')
+  .split(',')
+  .map((value) => value.trim())
+  .filter(Boolean);
+const allowedCorsOrigins = configuredCorsOrigins.length > 0
+  ? configuredCorsOrigins
+  : ['http://localhost:5173', 'http://127.0.0.1:5173'];
 
 if (!process.env.DATABASE_URL) {
   throw new Error('DATABASE_URL is required for orchestration service startup');
 }
+
+if (nodeEnv === 'production' && jwtSecret === 'local-dev-secret-change-me') {
+  throw new Error('JWT_SECRET must be set to a non-default value in production');
+}
+
+if (!/^https?:\/\//.test(intellumApiBaseUrl)) {
+  throw new Error('INTELLUM_API_BASE_URL must be a valid http(s) URL');
+}
+
+app.use(
+  '*',
+  cors({
+    origin: (origin) => {
+      if (!origin) {
+        return nodeEnv === 'development' ? '*' : '';
+      }
+
+      if (nodeEnv === 'development' && origin.endsWith('.trycloudflare.com')) {
+        return origin;
+      }
+
+      if (allowedCorsOrigins.includes(origin)) {
+        return origin;
+      }
+
+      return '';
+    },
+    allowHeaders: ['Authorization', 'Content-Type', 'X-Request-Id'],
+    allowMethods: ['GET', 'POST', 'OPTIONS'],
+    exposeHeaders: ['X-Request-Id']
+  })
+);
+
+app.use('*', async (c, next) => {
+  const requestId = c.req.header('x-request-id') ?? randomUUID();
+  c.set('requestId', requestId);
+  const start = Date.now();
+
+  await next();
+
+  c.header('x-request-id', requestId);
+  const durationMs = Date.now() - start;
+  const method = c.req.method;
+  const path = c.req.path;
+  const status = c.res.status;
+  console.log(`[req:${requestId}] ${method} ${path} -> ${status} (${durationMs}ms)`);
+});
 
 const store = new OrchestrationStore(process.env.DATABASE_URL);
 const assignmentEngine = new AssignmentEngine(store);
 await store.migrateAndSeedUsers();
 
 let isPolling = false;
+
+async function waitMs(ms: number): Promise<void> {
+  await new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+async function postGradeToIntellum(submissionId: string, result: 'PASS' | 'FAIL', graderId: string) {
+  const url = new URL(`/api/submissions/${submissionId}/grade`, intellumApiBaseUrl);
+  const payload = {
+    result,
+    graded_by: graderId,
+    graded_at: new Date().toISOString()
+  };
+
+  let lastError = '';
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          accept: 'application/json'
+        },
+        body: JSON.stringify(payload)
+      });
+
+      if (!response.ok) {
+        const body = await response.text();
+        throw new Error(`HTTP ${response.status}: ${body}`);
+      }
+
+      return { success: true, attempts: attempt };
+    } catch (error) {
+      lastError = String(error);
+      if (attempt < 3) {
+        await waitMs(200 * attempt);
+      }
+    }
+  }
+
+  return { success: false, attempts: 3, detail: lastError };
+}
 
 async function performSync(reason: 'manual' | 'cron' | 'interval') {
   if (isPolling) {
@@ -228,6 +319,23 @@ app.get('/api/graders/:graderId/queue', async (c, next) => requireAuth(c, next, 
   }
 });
 
+app.get('/api/graders/:graderId/recent-graded', async (c, next) => requireAuth(c, next, store, jwtSecret), async (c) => {
+  const graderId = c.req.param('graderId');
+  const authUser = c.get('authUser');
+
+  if (authUser.role !== 'ADMIN' && authUser.id !== graderId) {
+    return c.json({ error: 'Forbidden' }, 403);
+  }
+
+  const limit = Number(c.req.query('limit') ?? 20);
+  try {
+    const items = await store.getGraderRecentGraded(graderId, Number.isNaN(limit) ? 20 : Math.max(1, Math.min(limit, 100)));
+    return c.json({ graderId, items, total: items.length });
+  } catch (error) {
+    return c.json({ error: 'Failed to fetch graded history', detail: String(error) }, 500);
+  }
+});
+
 // Sprint 3: Assignment Endpoints
 app.post(
   '/api/assignments',
@@ -295,12 +403,37 @@ app.post(
     const submissionId = c.req.param('submissionId');
     const { result } = c.req.valid('json');
     const grader = c.get('authUser');
+    const requestId = c.get('requestId');
 
     try {
       const gradeResult = await assignmentEngine.gradeSubmission(submissionId, grader.id, result);
 
       if (!gradeResult.success) {
         return c.json({ error: gradeResult.detail ?? 'Failed to grade submission' }, 400);
+      }
+
+      if (!gradeResult.isIdempotent) {
+        const writeback = await postGradeToIntellum(submissionId, result, grader.id);
+        if (!writeback.success) {
+          await store.recordEvent(submissionId, 'GRADE_WRITEBACK_FAILED', grader.id, {
+            result,
+            requestId,
+            detail: writeback.detail ?? 'Unknown writeback error',
+            attempts: writeback.attempts
+          });
+
+          return c.json({
+            error: 'Grade saved locally but Intellum writeback failed',
+            detail: writeback.detail,
+            requestId
+          }, 502);
+        }
+
+        await store.recordEvent(submissionId, 'GRADE_WRITEBACK_SUCCEEDED', grader.id, {
+          result,
+          requestId,
+          attempts: writeback.attempts
+        });
       }
 
       return c.json({

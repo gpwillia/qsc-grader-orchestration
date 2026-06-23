@@ -355,9 +355,10 @@ export class OrchestrationStore {
     cachedSubmissions: number;
     assigned: number;
     inProgress: number;
+    lastSyncAt: string | null;
     watermark: string;
   }> {
-    const [users, cached, assigned, inProgress, watermark] = await Promise.all([
+    const [users, cached, assigned, inProgress, lastSyncAt, watermark] = await Promise.all([
       this.pool.query('SELECT COUNT(*) AS total FROM users'),
       this.pool.query('SELECT COUNT(*) AS total FROM submissions_cache'),
       this.pool.query(
@@ -365,6 +366,9 @@ export class OrchestrationStore {
       ),
       this.pool.query(
         "SELECT COUNT(*) AS total FROM submissions_cache WHERE orchestration_state = 'IN_PROGRESS'"
+      ),
+      this.pool.query(
+        "SELECT MAX(timestamp) AS value FROM events WHERE type = 'SYNCED'"
       ),
       this.getSyncWatermark()
     ]);
@@ -374,8 +378,24 @@ export class OrchestrationStore {
       cachedSubmissions: Number(cached.rows[0].total),
       assigned: Number(assigned.rows[0].total),
       inProgress: Number(inProgress.rows[0].total),
+      lastSyncAt: lastSyncAt.rows[0].value ?? null,
       watermark
     };
+  }
+
+  async recordEvent(
+    submissionId: string,
+    type: string,
+    actorId: string,
+    payload: Record<string, unknown>
+  ): Promise<void> {
+    await this.pool.query(
+      `
+        INSERT INTO events (submission_id, type, actor_id, timestamp, payload)
+        VALUES ($1, $2, $3, NOW(), $4::jsonb)
+      `,
+      [submissionId, type, actorId, JSON.stringify(payload)]
+    );
   }
 
   async getExamQueue(examId: string) {
@@ -387,7 +407,10 @@ export class OrchestrationStore {
           a.id AS assignment_id, a.grader_id, a.assigned_at, a.assigned_by
         FROM submissions_cache sc
         LEFT JOIN assignments a ON sc.submission_id = a.submission_id
-        WHERE sc.exam_id = $1 AND sc.orchestration_state IS NULL
+        WHERE sc.exam_id = $1
+          AND sc.orchestration_state IS NULL
+          AND sc.intellum_status = 'NEEDS_GRADING'
+          AND sc.graded_result IS NULL
         ORDER BY sc.created_at ASC
       `,
       [examId]
@@ -520,7 +543,9 @@ export class OrchestrationStore {
       if (result.rowCount === 0) {
         const existing = await this.pool.query(
           `
-            SELECT id FROM assignments WHERE submission_id = $1
+            SELECT id
+            FROM assignments
+            WHERE submission_id = $1 AND state IN ('ASSIGNED', 'IN_PROGRESS')
           `,
           [submissionId]
         );
@@ -556,7 +581,9 @@ export class OrchestrationStore {
       if (String(error).includes('unique constraint')) {
         const existing = await this.pool.query(
           `
-            SELECT id FROM assignments WHERE submission_id = $1
+            SELECT id
+            FROM assignments
+            WHERE submission_id = $1 AND state IN ('ASSIGNED', 'IN_PROGRESS')
           `,
           [submissionId]
         );
@@ -656,10 +683,13 @@ export class OrchestrationStore {
     await this.pool.query(
       `
         UPDATE submissions_cache
-        SET graded_result = $1
-        WHERE submission_id = $2
+        SET graded_result = $1,
+            intellum_status = $2,
+            orchestration_state = NULL,
+            source_last_updated = NOW()
+        WHERE submission_id = $3
       `,
-      [result, submissionId]
+      [result, result === 'PASS' ? 'GRADED_PASS' : 'GRADED_FAIL', submissionId]
     );
 
     await this.pool.query(
@@ -671,6 +701,42 @@ export class OrchestrationStore {
     );
 
     return true;
+  }
+
+  async getGraderRecentGraded(graderId: string, limit = 20): Promise<Array<{
+    submissionId: string;
+    examId: string;
+    learnerId: string;
+    result: 'PASS' | 'FAIL' | null;
+    gradedAt: string;
+  }>> {
+    const result = await this.pool.query(
+      `
+        SELECT
+          a.submission_id,
+          sc.exam_id,
+          sc.learner_id,
+          sc.graded_result,
+          MAX(e.timestamp) AS graded_at
+        FROM assignments a
+        INNER JOIN submissions_cache sc ON sc.submission_id = a.submission_id
+        INNER JOIN events e ON e.submission_id = a.submission_id AND e.type = 'GRADED'
+        WHERE a.grader_id = $1
+          AND a.state = 'GRADED'
+        GROUP BY a.submission_id, sc.exam_id, sc.learner_id, sc.graded_result
+        ORDER BY graded_at DESC
+        LIMIT $2
+      `,
+      [graderId, limit]
+    );
+
+    return result.rows.map((row) => ({
+      submissionId: row.submission_id,
+      examId: row.exam_id,
+      learnerId: row.learner_id,
+      result: row.graded_result,
+      gradedAt: row.graded_at
+    }));
   }
 
   async reassignSubmission(

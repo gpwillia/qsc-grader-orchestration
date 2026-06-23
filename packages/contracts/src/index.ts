@@ -51,7 +51,9 @@ export interface AuditEvent {
     | 'GRADED'
     | 'REASSIGNED'
     | 'UNASSIGNED_BY_ADMIN'
-    | 'SYNCED';
+    | 'SYNCED'
+    | 'GRADE_WRITEBACK_SUCCEEDED'
+    | 'GRADE_WRITEBACK_FAILED';
   actorId: string;
   timestamp: string;
   payload: Record<string, unknown>;
