@@ -31,6 +31,34 @@ type HistoryResponse = {
   events: HistoryRecord[];
 };
 
+type SystemHealthResponse = {
+  service: string;
+  ok: boolean;
+  intellumApiBaseUrl: string;
+  pollIntervalSeconds: number;
+  dbConfigured: boolean;
+  users: number;
+  cachedSubmissions: number;
+  assigned: number;
+  inProgress: number;
+  lastSyncAt: string | null;
+  watermark: string;
+};
+
+type RecentGradedItem = {
+  submissionId: string;
+  examId: string;
+  learnerId: string;
+  result: 'PASS' | 'FAIL' | null;
+  gradedAt: string;
+};
+
+type RecentGradedResponse = {
+  graderId: string;
+  items: RecentGradedItem[];
+  total: number;
+};
+
 type ActiveItem = QueueItem & {
   activeState: 'ASSIGNED' | 'IN_PROGRESS';
 };
@@ -118,6 +146,8 @@ export function App() {
   const [graderQueue, setGraderQueue] = useState<QueueItem[]>([]);
 
   const [history, setHistory] = useState<HistoryRecord[]>([]);
+  const [recentGraded, setRecentGraded] = useState<RecentGradedItem[]>([]);
+  const [systemHealth, setSystemHealth] = useState<SystemHealthResponse | null>(null);
   const [selectedSubmissionId, setSelectedSubmissionId] = useState<string>('');
   const [assignGraderBySubmission, setAssignGraderBySubmission] = useState<Record<string, string>>({});
   const [reassignGraderBySubmission, setReassignGraderBySubmission] = useState<Record<string, string>>({});
@@ -126,6 +156,8 @@ export function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [status, setStatus] = useState('');
+
+  const apiUnavailable = error.toLowerCase().includes('failed to fetch');
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEYS.apiBase, apiBaseUrl);
@@ -214,6 +246,12 @@ export function App() {
     setError('');
 
     try {
+      const healthResponse = await fetch(`${apiBaseUrl}/health`, {
+        headers: buildHeaders(token)
+      });
+      const healthData = await parseJson<SystemHealthResponse>(healthResponse);
+      setSystemHealth(healthData);
+
       const gradersResponse = await fetch(`${apiBaseUrl}/api/graders`, {
         headers: buildHeaders(token)
       });
@@ -252,6 +290,7 @@ export function App() {
 
       setStatus(`Updated ${examData.total} queue items for ${examId}.`);
     } catch (err) {
+      setSystemHealth(null);
       setError(String(err));
       setStatus('');
     } finally {
@@ -273,6 +312,12 @@ export function App() {
       const data = await parseJson<GraderQueueResponse>(response);
       setGraderQueue(data.items);
 
+      const recentResponse = await fetch(`${apiBaseUrl}/api/graders/${user.id}/recent-graded?limit=12`, {
+        headers: buildHeaders(token)
+      });
+      const recentData = await parseJson<RecentGradedResponse>(recentResponse);
+      setRecentGraded(recentData.items);
+
       if (historySubmissionId) {
         const historyResponse = await fetch(`${apiBaseUrl}/api/submissions/${historySubmissionId}/history`, {
           headers: buildHeaders(token)
@@ -283,6 +328,7 @@ export function App() {
 
       setStatus(`Loaded ${data.activeCount} active items.`);
     } catch (err) {
+      setRecentGraded([]);
       setError(String(err));
       setStatus('');
     } finally {
@@ -535,6 +581,23 @@ export function App() {
     [graderQueue]
   );
 
+  function adminQueueEmptyMessage(): string {
+    if (apiUnavailable) {
+      return 'API is unreachable. Verify API Base URL and orchestration service is running.';
+    }
+    if (examQueue.length === 0) {
+      return `No unassigned items found for ${selectedExam}. Click Manual Sync or choose another exam.`;
+    }
+    return 'No matching unassigned items for current filters. Adjust filters or search.';
+  }
+
+  function graderQueueEmptyMessage(): string {
+    if (apiUnavailable) {
+      return 'API is unreachable. Verify API Base URL and orchestration service is running.';
+    }
+    return 'No active submissions in your queue. Ask an admin to assign work, then click Refresh Queue.';
+  }
+
   if (!token || !user) {
     return (
       <div className="app-wrapper">
@@ -653,6 +716,25 @@ export function App() {
         {error ? <section className="error card">{error}</section> : null}
         {status ? <section className="status card">{status}</section> : null}
 
+        <section className="card system-grid">
+          <div>
+            <strong>API</strong>
+            <div className="subline">{systemHealth?.ok ? 'Reachable' : 'Unavailable'}</div>
+          </div>
+          <div>
+            <strong>Cached Submissions</strong>
+            <div className="subline">{systemHealth?.cachedSubmissions ?? 0}</div>
+          </div>
+          <div>
+            <strong>Last Sync</strong>
+            <div className="subline">{systemHealth?.lastSyncAt ? new Date(systemHealth.lastSyncAt).toLocaleString() : 'Not synced yet'}</div>
+          </div>
+          <div>
+            <strong>DB</strong>
+            <div className="subline">{systemHealth?.dbConfigured ? 'Configured' : 'Not configured'}</div>
+          </div>
+        </section>
+
         <section className="dashboard-grid">
           <article className="card queue-panel">
             <h2>Unassigned Queue: {selectedExam}</h2>
@@ -672,7 +754,7 @@ export function App() {
                 <tbody>
                   {filteredExamQueue.length === 0 ? (
                     <tr>
-                      <td colSpan={6}>No matching unassigned items.</td>
+                      <td colSpan={6}>{adminQueueEmptyMessage()}</td>
                     </tr>
                   ) : (
                     filteredExamQueue.map((item) => {
@@ -885,7 +967,7 @@ export function App() {
               <tbody>
                 {graderQueue.length === 0 ? (
                   <tr>
-                    <td colSpan={5}>No active submissions in your queue.</td>
+                    <td colSpan={5}>{graderQueueEmptyMessage()}</td>
                   </tr>
                 ) : (
                   graderQueue.map((item) => {
@@ -958,6 +1040,41 @@ export function App() {
               ))
             )}
           </ol>
+        </article>
+
+        <article className="card history-panel">
+          <h2>Recently Graded By You</h2>
+          <p className="muted">Latest completed submissions from your account.</p>
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Submission</th>
+                  <th>Exam</th>
+                  <th>Learner</th>
+                  <th>Result</th>
+                  <th>Graded At</th>
+                </tr>
+              </thead>
+              <tbody>
+                {recentGraded.length === 0 ? (
+                  <tr>
+                    <td colSpan={5}>No completed submissions yet.</td>
+                  </tr>
+                ) : (
+                  recentGraded.map((item) => (
+                    <tr key={item.submissionId + item.gradedAt}>
+                      <td>{item.submissionId}</td>
+                      <td>{item.examId}</td>
+                      <td>{item.learnerId}</td>
+                      <td>{item.result ?? '-'}</td>
+                      <td>{new Date(item.gradedAt).toLocaleString()}</td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
         </article>
       </section>
     </main>
