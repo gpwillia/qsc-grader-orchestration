@@ -27,6 +27,7 @@ Docker, Postgres, orchestration, Mock Intellum, and the UI were brought up local
    - Confirmation prompts to prevent accidental double-submit
    - Per-row pending state to disable buttons during API calls
    - Submission history visible to grader
+   - Recently graded panel for grader self-history
 
 3. **Backend APIs (Sprint 3 & 4 endpoints)**
    - All 8 assignment workflow endpoints
@@ -35,6 +36,8 @@ Docker, Postgres, orchestration, Mock Intellum, and the UI were brought up local
    - Queue APIs with FIFO ordering
    - Grader-only authorization on personal queue
    - Admin-only authorization on admin actions
+   - Intellum writeback with retry and explicit failure events
+   - Request ID logging and CORS allowlist controls
 
 **Code Structure**
 ```
@@ -60,16 +63,14 @@ Verified in the running stack:
 
 **Known Limitations (No Impact on Core Functionality)**
 
-- Grade endpoint does not yet POST result back to Intellum
-  - Status: Ready for integration once Intellum grade endpoint is defined
-  - Submission records are marked graded locally ✓
-  - Audit trail records the grade event ✓
-  - Backend idempotency works correctly ✓
-  - UI flow is complete ✓
+- Grade writeback depends on Intellum availability
+  - Status: Implemented with retry and failure event logging
+  - Local grade state persists even if external writeback fails
+  - `GRADE_WRITEBACK_FAILED` event indicates operational follow-up needed
 
-- Grader cannot see history of items already graded (past queue)
-  - Acceptable for MVP; full history available via admin audit panel
-  - Can be added in future by adding "past submissions" API
+- Grader recent history is currently limited (default top 12)
+  - Acceptable for MVP; admin still has full submission timeline
+  - Can be expanded with paging if needed
 
 **Smoke Test Checklist (Manual Verification)**
 

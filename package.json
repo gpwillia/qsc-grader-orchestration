@@ -14,6 +14,7 @@
     "contracts:check": "node ./scripts/check-contracts-version.mjs",
     "build": "npm run build --workspaces --if-present",
     "typecheck": "npm run build -w @qsc/contracts && npm run typecheck --workspaces --if-present",
+    "smoke:api": "node ./scripts/smoke-api.mjs",
     "ci:verify": "npm run contracts:check && npm run typecheck && npm run build"
   }
 }

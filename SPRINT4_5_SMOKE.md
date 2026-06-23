@@ -22,7 +22,7 @@ Expected local stack:
 
    npm run dev:mock-intellum
 
-   DATABASE_URL=postgresql://postgres:postgres@localhost:5432/orchestration npm run dev:orchestration
+   DATABASE_URL=postgresql://qsc_user:qsc_password@localhost:5432/qsc_orchestration npm run dev:orchestration
 
    npm run dev:ui
 
@@ -42,7 +42,7 @@ Expected local stack:
 
 4. Admin fetch queue and assign one item:
 
-   curl -s http://localhost:8789/api/exams/exam-001/queue -H "Authorization: Bearer <ADMIN_TOKEN>"
+   curl -s http://localhost:8789/api/exams/EXAM-AUDIO-101/queue -H "Authorization: Bearer <ADMIN_TOKEN>"
 
    curl -s -X POST http://localhost:8789/api/assignments -H "Authorization: Bearer <ADMIN_TOKEN>" -H "Content-Type: application/json" -d '{"submissionId":"sub-0001","graderId":"u-grader-1"}'
 
@@ -80,4 +80,4 @@ Expected local stack:
 - Grader sees only personal queue.
 - Grader cannot grade until item is IN_PROGRESS.
 - PASS or FAIL completion removes item from active queue.
-- History shows ASSIGNED, STARTED, and GRADED events in order.
+- History shows ASSIGNED, STARTED, GRADED, and GRADE_WRITEBACK_SUCCEEDED events in order.

@@ -17,7 +17,7 @@ This document describes the complete testing workflow for Sprint 3 (Assignment W
 
 3. **Orchestration service running:**
    ```bash
-   DATABASE_URL="postgresql://postgres:postgres@localhost:5432/orchestration" \
+   DATABASE_URL="postgresql://qsc_user:qsc_password@localhost:5432/qsc_orchestration" \
    npm run dev:orchestration
    # Listens on http://localhost:8789
    ```
@@ -113,7 +113,7 @@ curl http://localhost:8789/health | jq
 
 #### 3.1 Get Exam Queue (Admin)
 ```bash
-curl -X GET http://localhost:8789/api/exams/exam-001/queue \
+curl -X GET http://localhost:8789/api/exams/EXAM-AUDIO-101/queue \
   -H "Authorization: Bearer $ADMIN_TOKEN" | jq
 ```
 
@@ -125,21 +125,21 @@ curl -X GET http://localhost:8789/api/exams/exam-001/queue \
       "submission": {
         "id": "sub-0001",
         "learnerId": "learner-001",
-        "examId": "exam-001",
+        "examId": "EXAM-AUDIO-101",
         "attemptId": "attempt-001",
         "createdAt": "2025-01-15T00:00:00Z",
         "status": "NEEDS_GRADING",
         "lastUpdated": "2025-01-15T00:00:00Z"
       },
       "assignment": null,
-      "examId": "exam-001",
+      "examId": "EXAM-AUDIO-101",
       "learnerId": "learner-001",
       "attemptId": "attempt-001"
     }
     // ... more unassigned submissions
   ],
   "total": 28,
-  "examId": "exam-001"
+  "examId": "EXAM-AUDIO-101"
 }
 ```
 
@@ -264,6 +264,7 @@ curl -X POST http://localhost:8789/api/assignments/sub-0001/grade \
 **Verify:**
 - Assignment state changed to `GRADED` (or removed)
 - Audit event `GRADED` recorded
+- Audit event `GRADE_WRITEBACK_SUCCEEDED` recorded
 - graded_result in submissions_cache set to `PASS`
 
 #### 4.6 Test Grade Idempotency
@@ -353,7 +354,7 @@ curl -X POST http://localhost:8789/api/assignments/sub-0002/unassign \
 
 #### 5.4 Verify Item Returned to Exam Queue
 ```bash
-curl -X GET http://localhost:8789/api/exams/exam-001/queue \
+curl -X GET http://localhost:8789/api/exams/EXAM-AUDIO-101/queue \
   -H "Authorization: Bearer $ADMIN_TOKEN" | jq '.items[] | select(.submission.id == "sub-0002")'
 ```
 

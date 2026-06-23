@@ -178,14 +178,15 @@ Sprint 4 builds the **Admin Dashboard** UI that uses all these Sprint 3 endpoint
 
 ## Known Limitations & Future Work
 
-1. **Intellum grade posting** not yet implemented (POST /api/submissions/{id}/grade)
-   - Will be added when Mock Intellum endpoint is defined
-   - Grade endpoint is ready to call it when available
+1. **Writeback dependency on Intellum availability**
+   - Grade endpoint now POSTs to Mock Intellum (`POST /api/submissions/{id}/grade`) with retry
+   - If writeback fails, API returns 502 and records `GRADE_WRITEBACK_FAILED` in history
+   - Status: Implemented with resilience; monitor failures operationally
 
 2. **Concurrency edge cases**
    - Race condition if two graders try to start same item simultaneously
-   - Solution: Add assignment ownership check on start (verify grader_id matches JWT)
-   - Status: Can be added in Sprint 4 hardening phase
+   - Current guard enforces assignment ownership + state checks
+   - Status: Residual low risk; can be further hardened with explicit row-level locking
 
 3. **WIP limit edge case**
    - If grader capacity dynamically changes after assignment, not re-evaluated
@@ -195,10 +196,10 @@ Sprint 4 builds the **Admin Dashboard** UI that uses all these Sprint 3 endpoint
 
 ## Deployment Readiness
 
-Sprint 3 code is production-ready pending:
-- [ ] Intellum API endpoint definition for posting grades (blocks grade idempotency test)
-- [ ] Database connection string (local docker or managed Postgres)
-- [ ] JWT secret configuration
+Sprint 3 code is production-ready with these runtime requirements:
+- [x] Intellum grade writeback integration and retry path
+- [x] Database connection string configured (local docker or managed Postgres)
+- [x] JWT secret configuration (non-default required for production)
 
 No additional infrastructure needed beyond Sprint 2 (Postgres + cron trigger support already in place).
 
