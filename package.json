@@ -1,0 +1,19 @@
+{
+  "name": "qsc-grader-orchestration-poc",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev:contracts": "npm run dev -w @qsc/contracts",
+    "dev:mock-intellum": "npm run dev -w @qsc/mock-intellum",
+    "dev:orchestration": "npm run dev -w @qsc/orchestration",
+    "dev:ui": "npm run dev -w @qsc/mock-qsc-ui",
+    "contracts:check": "node ./scripts/check-contracts-version.mjs",
+    "build": "npm run build --workspaces --if-present",
+    "typecheck": "npm run build -w @qsc/contracts && npm run typecheck --workspaces --if-present",
+    "ci:verify": "npm run contracts:check && npm run typecheck && npm run build"
+  }
+}

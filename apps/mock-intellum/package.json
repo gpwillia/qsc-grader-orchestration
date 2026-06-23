@@ -1,0 +1,22 @@
+{
+  "name": "@qsc/mock-intellum",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@hono/node-server": "^1.13.1",
+    "@hono/zod-validator": "^0.4.1",
+    "@qsc/contracts": "0.1.0",
+    "hono": "^4.6.5",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.1",
+    "typescript": "^5.6.3"
+  }
+}

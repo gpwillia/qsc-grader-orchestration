@@ -1,0 +1,6 @@
+name = "mock-intellum"
+main = "src/index.ts"
+compatibility_date = "2026-06-16"
+
+[vars]
+SERVICE_NAME = "mock-intellum"
