@@ -3,3 +3,7 @@ dist/
 .env
 .env.local
 .DS_Store
+
+# Runtime data — regenerated on service startup, should not be committed
+apps/mock-intellum/data/*.db
+apps/orchestration/data/
